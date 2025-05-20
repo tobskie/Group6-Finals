@@ -7,10 +7,18 @@
 #include <cctype>
 #include <regex>
 #include <cstdlib>
-#include <termios.h>
-#include <unistd.h>
 #include <stdexcept>
 #include <memory>
+#include <iomanip>
+
+// Cross-platform terminal handling
+#ifdef _WIN32
+    #include <conio.h>
+    #include <windows.h>
+#else
+    #include <termios.h>
+    #include <unistd.h>
+#endif
 
 using namespace std;
 
@@ -89,6 +97,37 @@ private:
 public:
     Pet(string n, string b, int a, bool v)
         : name(n), breed(b), age(a), vaccinated(v), adopted(false) {}
+    
+    // Serialization for file storage
+    string serialize() const {
+        return name + "," + breed + "," + to_string(age) + "," + 
+               (vaccinated ? "1" : "0") + "," + (adopted ? "1" : "0");
+    }
+    
+    // Static method to deserialize from string
+    static Pet deserialize(const string& data) {
+        size_t pos1 = data.find(',');
+        size_t pos2 = data.find(',', pos1+1);
+        size_t pos3 = data.find(',', pos2+1);
+        size_t pos4 = data.find(',', pos3+1);
+        
+        if (pos1 == string::npos || pos2 == string::npos || 
+            pos3 == string::npos || pos4 == string::npos) {
+            throw InvalidInputException("Invalid pet data format");
+        }
+        
+        string name = data.substr(0, pos1);
+        string breed = data.substr(pos1+1, pos2-pos1-1);
+        int age = stoi(data.substr(pos2+1, pos3-pos2-1));
+        bool vaccinated = (data.substr(pos3+1, pos4-pos3-1) == "1");
+        
+        Pet pet(name, breed, age, vaccinated);
+        if (data.substr(pos4+1) == "1") {
+            pet.markAsAdopted();
+        }
+        return pet;
+    }
+    
     string getName() const { return name; }
     string getBreed() const { return breed; }
     int getAge() const { return age; }
@@ -111,6 +150,36 @@ private:
 public:
     Application(int i, string uname, string pname)
         : id(i), username(uname), petName(pname), status("Pending") {}
+    
+    // Serialization for file storage
+    string serialize() const {
+        return to_string(id) + "," + username + "," + petName + "," + status;
+    }
+    
+    // Static method to deserialize from string
+    static Application deserialize(const string& data) {
+        size_t pos1 = data.find(',');
+        size_t pos2 = data.find(',', pos1+1);
+        size_t pos3 = data.find(',', pos2+1);
+        
+        if (pos1 == string::npos || pos2 == string::npos || pos3 == string::npos) {
+            throw InvalidInputException("Invalid application data format");
+        }
+        
+        int id = stoi(data.substr(0, pos1));
+        string username = data.substr(pos1+1, pos2-pos1-1);
+        string petName = data.substr(pos2+1, pos3-pos2-1);
+        string status = data.substr(pos3+1);
+        
+        Application app(id, username, petName);
+        if (status == "Approved") {
+            app.approve();
+        } else if (status == "Rejected") {
+            app.reject();
+        }
+        return app;
+    }
+    
     int getID() const { return id; }
     string getPetName() const { return petName; }
     string getUsername() const { return username; }
@@ -132,6 +201,8 @@ public:
     string getUsername() const { return username; }
     string getPassword() const { return password; }
     Role getRole() const { return role; }
+    void setUsername(const string& uname) { username = uname; }
+    void setPassword(const string& pwd) { password = pwd; }
     
     virtual void showDashboard() = 0;
     virtual void performAction(PetAdoptionSystem& system) = 0;
@@ -139,6 +210,8 @@ public:
     bool authenticate(string uname, string pwd) const {
         return (username == uname && password == pwd);
     }
+    
+    friend class PetAdoptionSystem;
 };
 
 // Admin class
@@ -188,16 +261,28 @@ private:
     PetAdoptionSystem() {
         loadUsersFromFile();
         if (users.empty()) {
-            users.push_back(make_unique<Admin>("admin", "admin123"));
+            users.push_back(unique_ptr<User>(new Admin("admin", "admin123")));
             saveUsersToFile();
         }
-        pets.push_back(Pet("Whiskers", "Siamese", 2, true));
-        pets.push_back(Pet("Rex", "Labrador", 3, true));
+        
+        loadPetsFromFile();
+        // Add default pets only if no pets were loaded
+        if (pets.empty()) {
+            pets.push_back(Pet("Whiskers", "Siamese", 2, true));
+            pets.push_back(Pet("Rex", "Labrador", 3, true));
+            savePetsToFile();
+        }
+        
+        loadApplicationsFromFile();
     }
     
     // File handling functions
     void saveUsersToFile();
     void loadUsersFromFile();
+    void savePetsToFile();
+    void loadPetsFromFile();
+    void saveApplicationsToFile();
+    void loadApplicationsFromFile();
     
     // Helper functions
     void clearScreen() const {
@@ -207,7 +292,9 @@ private:
     string getHiddenInput(const string& prompt) const {
         string input;
         cout << prompt;
+        
         #ifdef _WIN32
+        // Windows implementation
         char ch;
         while ((ch = _getch()) != '\r') {
             if (ch == '\b') {
@@ -221,16 +308,36 @@ private:
             }
         }
         #else
-        system("stty -echo");
-        getline(cin, input);
-        system("stty echo");
+        // Unix/Linux/macOS implementation using termios directly
+        termios oldt, newt;
+        tcgetattr(STDIN_FILENO, &oldt);
+        newt = oldt;
+        newt.c_lflag &= ~(ECHO | ICANON);
+        tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+        
+        char ch;
+        while ((ch = getchar()) != '\n') {
+            if (ch == 127 || ch == 8) { // Backspace or Delete
+                if (!input.empty()) {
+                    cout << "\b \b";
+                    input.pop_back();
+                }
+            } else {
+                cout << '*';
+                input.push_back(ch);
+            }
+        }
+        
+        // Restore terminal settings
+        tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
         #endif
+        
         cout << endl;
         return input;
     }
     
     string getValidatedInput(const string& prompt, bool (*validator)(const string&), 
-                             const string& errorMsg, int maxAttempts = 3) const {
+                           const string& errorMsg, int maxAttempts = 3) const {
         string input;
         int attempts = 0;
         while (attempts < maxAttempts) {
@@ -322,12 +429,13 @@ public:
     
     // Main system operations
     void run();
-    void registerUser();
-    User* login();
+    void registerUser(Role role);
+    User* login(Role role);
     
     // Pet operations
     void addPet(const string& name, const string& breed, int age, bool vaccinated) {
         pets.emplace_back(name, breed, age, vaccinated);
+        savePetsToFile(); // Save after adding
     }
     
     void editPet(size_t index, const string& name, const string& breed, int age, bool vaccinated) {
@@ -338,6 +446,7 @@ public:
         pets[index].setBreed(breed);
         pets[index].setAge(age);
         pets[index].setVaccinated(vaccinated);
+        savePetsToFile(); // Save after editing
     }
     
     void deletePet(size_t index) {
@@ -345,6 +454,29 @@ public:
             throw out_of_range("Invalid pet index");
         }
         pets.erase(pets.begin() + index);
+        savePetsToFile(); // Save after deleting
+    }
+    
+    void viewAllPets() const {
+        clearScreen();
+        cout << "\n=== ALL PET RECORDS ===\n";
+        if (pets.empty()) {
+            cout << "No pets in the system.\n";
+            return;
+        }
+        
+        cout << "ID  | Name          | Breed         | Age | Vaccinated | Status\n";
+        cout << "----+---------------+---------------+-----+------------+--------\n";
+        
+        for (size_t i = 0; i < pets.size(); ++i) {
+            const Pet& pet = pets[i];
+            cout << left << setw(4) << i+1 << "| "
+                 << setw(15) << pet.getName() << "| "
+                 << setw(15) << pet.getBreed() << "| "
+                 << setw(5) << pet.getAge() << "| "
+                 << setw(12) << (pet.isVaccinated() ? "Yes" : "No") << "| "
+                 << (pet.isAdopted() ? "Adopted" : "Available") << "\n";
+        }
     }
     
     const vector<Pet>& getAllPets() const { return pets; }
@@ -352,6 +484,7 @@ public:
     // Application operations
     void createApplication(const string& username, const string& petName) {
         applications.emplace_back(nextAppID++, username, petName);
+        saveApplicationsToFile(); // Save when a new application is created
     }
     
     void processApplication(size_t index, bool approve) {
@@ -364,12 +497,16 @@ public:
             for (auto& pet : pets) {
                 if (pet.getName() == applications[index].getPetName()) {
                     pet.markAsAdopted();
+                    savePetsToFile(); // Save pet status change
                     break;
                 }
             }
         } else {
             applications[index].reject();
         }
+        
+        // Save applications to file
+        saveApplicationsToFile();
     }
     
     const vector<Application>& getAllApplications() const { return applications; }
@@ -397,8 +534,8 @@ public:
         if (index >= users.size()) {
             throw out_of_range("Invalid user index");
         }
-        users[index]->username = username;
-        users[index]->password = password;
+        users[index]->setUsername(username);
+        users[index]->setPassword(password);
         saveUsersToFile();
     }
     
@@ -481,6 +618,20 @@ void PetAdoptionSystem::saveUsersToFile() {
                 << static_cast<int>(user->getRole()) << "\n";
     }
     outFile.close();
+    cout << "User credentials saved successfully.\n";
+}
+
+void PetAdoptionSystem::savePetsToFile() {
+    ofstream outFile("pets.dat");
+    if (!outFile.is_open()) {
+        throw FileOperationException("Failed to open pets file for writing");
+    }
+    
+    for (const auto& pet : pets) {
+        outFile << pet.serialize() << "\n";
+    }
+    outFile.close();
+    cout << "Pets saved successfully.\n";
 }
 
 void PetAdoptionSystem::loadUsersFromFile() {
@@ -490,6 +641,7 @@ void PetAdoptionSystem::loadUsersFromFile() {
     }
     
     string line;
+    int userCount = 0;
     while (getline(inFile, line)) {
         size_t pos1 = line.find(',');
         size_t pos2 = line.find(',', pos1+1);
@@ -500,12 +652,82 @@ void PetAdoptionSystem::loadUsersFromFile() {
         Role role = static_cast<Role>(stoi(line.substr(pos2+1)));
         
         if (role == Role::ADMIN) {
-            users.push_back(make_unique<Admin>(username, password));
+            users.push_back(unique_ptr<User>(new Admin(username, password)));
         } else {
-            users.push_back(make_unique<RegularUser>(username, password));
+            users.push_back(unique_ptr<User>(new RegularUser(username, password)));
+        }
+        userCount++;
+    }
+    inFile.close();
+    cout << userCount << " user(s) loaded from database.\n";
+}
+
+void PetAdoptionSystem::loadPetsFromFile() {
+    ifstream inFile("pets.dat");
+    if (!inFile.is_open()) {
+        return; // File doesn't exist yet
+    }
+    
+    string line;
+    while (getline(inFile, line)) {
+        try {
+            Pet pet = Pet::deserialize(line);
+            pets.push_back(pet);
+        } catch (const exception& e) {
+            cerr << "Error loading pet: " << e.what() << "\n";
+            continue; // Skip invalid entries
         }
     }
     inFile.close();
+    cout << pets.size() << " pets loaded from file.\n";
+}
+
+void PetAdoptionSystem::saveApplicationsToFile() {
+    ofstream outFile("applications.dat");
+    if (!outFile.is_open()) {
+        throw FileOperationException("Failed to open applications file for writing");
+    }
+    
+    // Also save the next application ID
+    outFile << "NEXT_ID:" << nextAppID << "\n";
+    
+    for (const auto& app : applications) {
+        outFile << app.serialize() << "\n";
+    }
+    outFile.close();
+    cout << "Applications saved successfully.\n";
+}
+
+void PetAdoptionSystem::loadApplicationsFromFile() {
+    ifstream inFile("applications.dat");
+    if (!inFile.is_open()) {
+        return; // File doesn't exist yet
+    }
+    
+    applications.clear();
+    string line;
+    
+    // First line should be the next ID
+    if (getline(inFile, line) && line.substr(0, 8) == "NEXT_ID:") {
+        nextAppID = stoi(line.substr(8));
+    } else {
+        // If not found, reset the file pointer to the beginning
+        inFile.clear();
+        inFile.seekg(0, ios::beg);
+    }
+    
+    // Read all applications
+    while (getline(inFile, line)) {
+        try {
+            Application app = Application::deserialize(line);
+            applications.push_back(app);
+        } catch (const exception& e) {
+            cerr << "Error loading application: " << e.what() << "\n";
+            continue; // Skip invalid entries
+        }
+    }
+    inFile.close();
+    cout << applications.size() << " applications loaded from file.\n";
 }
 
 // Admin actions implementation
@@ -537,8 +759,9 @@ void Admin::performAction(PetAdoptionSystem& system) {
                         throw InvalidInputException("Invalid password");
                     }
                     
-                    system.addUser(make_unique<Admin>(username, password));
-                    cout << "Admin added successfully!\n";
+                    system.addUser(unique_ptr<User>(new Admin(username, password)));
+                    // The addUser method already calls saveUsersToFile() internally
+                    cout << "Admin added successfully! Credentials have been saved.\n";
                     break;
                 }
                 case 2: { // Manage Users
@@ -568,18 +791,21 @@ void Admin::performAction(PetAdoptionSystem& system) {
                             string newName = system.getValidatedInput(
                                 "New username: ", isValidUsername, "Invalid username");
                             system.updateUser(idx, newName, allUsers[idx]->getPassword());
-                            cout << "Username updated!\n";
+                            // The updateUser method already calls saveUsersToFile() internally
+                            cout << "Username updated and saved!\n";
                             break;
                         }
                         case 2: {
                             string newPwd = system.getHiddenInput("New password: ");
                             system.updateUser(idx, allUsers[idx]->getUsername(), newPwd);
-                            cout << "Password updated!\n";
+                            // The updateUser method already calls saveUsersToFile() internally
+                            cout << "Password updated and saved!\n";
                             break;
                         }
                         case 3: {
                             system.deleteUser(idx);
-                            cout << "User deleted!\n";
+                            // The deleteUser method already calls saveUsersToFile() internally
+                            cout << "User deleted and database updated!\n";
                             break;
                         }
                     }
@@ -747,29 +973,34 @@ void Admin::performAction(PetAdoptionSystem& system) {
                 case 5: { // Search Pets
                     system.clearScreen();
                     cout << "\n=== SEARCH PETS ===\n";
-                    cout << "1. By Name\n2. By Breed\n3. By Age Range\n0. Back\n";
-                    int searchChoice = system.getNumericInput("Enter choice: ", 0, 3);
+                    cout << "1. By Name\n2. By Breed\n3. By Age Range\n4. View All Pets\n0. Back\n";
+                    int searchChoice = system.getNumericInput("Enter choice: ", 0, 4);
                     
                     if (searchChoice == 0) break;
+                    
+                    if (searchChoice == 4) {
+                        system.viewAllPets();
+                        break;
+                    }
                     
                     unique_ptr<SearchStrategy> strategy;
                     switch (searchChoice) {
                         case 1: {
                             string name = system.getValidatedInput(
                                 "Enter pet name to search: ", isValidName, "Invalid name");
-                            strategy = make_unique<NameSearchStrategy>(name);
+                            strategy.reset(new NameSearchStrategy(name));
                             break;
                         }
                         case 2: {
                             string breed = system.getValidatedInput(
                                 "Enter breed to search: ", isValidBreed, "Invalid breed");
-                            strategy = make_unique<BreedSearchStrategy>(breed);
+                            strategy.reset(new BreedSearchStrategy(breed));
                             break;
                         }
                         case 3: {
                             int minAge = system.getNumericInput("Enter minimum age: ", 0, 30);
                             int maxAge = system.getNumericInput("Enter maximum age: ", minAge, 30);
-                            strategy = make_unique<AgeRangeSearchStrategy>(minAge, maxAge);
+                            strategy.reset(new AgeRangeSearchStrategy(minAge, maxAge));
                             break;
                         }
                     }
@@ -840,10 +1071,6 @@ void RegularUser::performAction(PetAdoptionSystem& system) {
                     }
                     
                     cout << "\n0. Back\n";
-                    if (availableIndices.empty()) {
-                        cout << "No pets available for adoption.\n";
-                        break;
-                    }
                     int petChoice = system.getNumericInput(
                         "Select pet to apply for adoption (0 to cancel): ", 0, availableIndices.size());
                     if (petChoice == 0) break;
@@ -914,24 +1141,49 @@ void PetAdoptionSystem::run() {
     do {
         clearScreen();
         cout << "\n=== PET ADOPTION SYSTEM ===\n";
-        cout << "1. Login\n";
-        cout << "2. Register\n";
+        cout << "1. Admin Access\n";
+        cout << "2. User Access\n";
         cout << "3. Exit\n";
         
         try {
             choice = getNumericInput("Enter choice: ", 1, 3);
             
             switch (choice) {
-                case 1: { // Login
-                    User* user = login();
-                    if (user) {
-                        user->performAction(*this);
+                case 1: { // Admin Access
+                    clearScreen();
+                    cout << "\n=== ADMIN ACCESS ===\n";
+                    cout << "1. Login\n";
+                    cout << "0. Back\n";
+                    
+                    int adminChoice = getNumericInput("Enter choice: ", 0, 1);
+                    if (adminChoice == 0) break;
+                    
+                    User* admin = login(Role::ADMIN);
+                    if (admin) {
+                        admin->performAction(*this);
                     }
                     break;
                 }
-                case 2: // Register
-                    registerUser();
+                case 2: { // User Access
+                    clearScreen();
+                    cout << "\n=== USER ACCESS ===\n";
+                    cout << "1. Login\n";
+                    cout << "2. Register\n";
+                    cout << "0. Back\n";
+                    
+                    int userChoice = getNumericInput("Enter choice: ", 0, 2);
+                    if (userChoice == 0) break;
+                    
+                    if (userChoice == 1) {
+                        User* user = login(Role::USER);
+                        if (user) {
+                            user->performAction(*this);
+                        }
+                    } else {
+                        registerUser(Role::USER);
+                    }
                     break;
+                }
                 case 3: // Exit
                     cout << "Exiting system...\n";
                     break;
@@ -948,11 +1200,14 @@ void PetAdoptionSystem::run() {
     } while (choice != 3);
 }
 
-void PetAdoptionSystem::registerUser() {
+void PetAdoptionSystem::registerUser(Role role) {
+    if (role != Role::USER) {
+        cout << "Only regular users can register. Admin accounts must be created by existing admins.\n";
+        return;
+    }
+    
     clearScreen();
-    cout << "\n=== REGISTRATION ===\n";
-    cout << "Note: Only regular user registration is allowed\n";
-    cout << "Admin accounts must be created by system administrators\n\n";
+    cout << "\n=== USER REGISTRATION ===\n";
     
     try {
         string username = getValidatedInput(
@@ -973,67 +1228,73 @@ void PetAdoptionSystem::registerUser() {
             throw InvalidInputException("Invalid password");
         }
         
-        addUser(make_unique<RegularUser>(username, password));
-        cout << "Registration successful!\n";
+        addUser(unique_ptr<User>(new RegularUser(username, password)));
+        // The addUser method already calls saveUsersToFile() internally
+        cout << "Registration successful! Your credentials have been saved.\n";
     } catch (const InvalidInputException& e) {
         cout << "Registration failed: " << e.what() << "\n";
         cout << "1. Try again\n0. Back to menu\n";
         int retry = getNumericInput("Enter choice: ", 0, 1);
-        if (retry == 1) registerUser();
+        if (retry == 1) registerUser(role);
     }
 }
 
-User* PetAdoptionSystem::login() {
+User* PetAdoptionSystem::login(Role role) {
     clearScreen();
-    cout << "\n=== LOGIN ===\n";
-    cout << "Select role:\n";
-    cout << "1. Admin\n";
-    cout << "2. User\n";
-    cout << "0. Back to main menu\n";
+    cout << "\n=== " << (role == Role::ADMIN ? "ADMIN" : "USER") << " LOGIN ===\n";
     
     try {
-        int roleChoice = getNumericInput("Enter choice: ", 0, 2);
-        if (roleChoice == 0) return nullptr;
+        string username;
+        string password;
         
-        Role selectedRole = (roleChoice == 1) ? Role::ADMIN : Role::USER;
+        // Handle credential input
+        if (role == Role::ADMIN) {
+            username = getValidatedInput(
+                "Admin username (or '0' to cancel): ",
+                [](const string& s) { return isValidUsername(s) || s == "0"; },
+                "Invalid username format");
+        } else {
+            username = getValidatedInput(
+                "Username (or '0' to cancel): ",
+                [](const string& s) { return isValidUsername(s) || s == "0"; },
+                "Invalid username format");
+        }
         
-        // Default admin shortcut
-        if (selectedRole == Role::ADMIN) {
+        if (username == "0") return nullptr;
+        password = getHiddenInput("Password (or '0' to cancel): ");
+        if (password == "0") return nullptr;
+        
+        // Special case for default admin
+        if (role == Role::ADMIN && username == "admin" && password == "admin123") {
             for (const auto& user : users) {
-                if (user->getRole() == Role::ADMIN &&
-                    user->getUsername() == "admin" &&
-                    user->getPassword() == "admin123") {
-                    cout << "\nDefault admin login successful!\n";
+                if (user->getUsername() == "admin") {
+                    cout << "\nAdmin login successful!\n";
                     return user.get();
                 }
             }
-            throw AuthenticationException("Default admin not found");
+            
+            // Create default admin if not found
+            users.push_back(unique_ptr<User>(new Admin("admin", "admin123")));
+            saveUsersToFile();
+            cout << "Login credentials saved successfully.\n";
+            cout << "\nDefault admin created and login successful!\n";
+            return users.back().get();
         }
         
-        string username = getValidatedInput(
-            "Username (or '0' to cancel): ",
-            [](const string& s) { return isValidUsername(s) || s == "0"; },
-            "Invalid username format");
-        
-        if (username == "0") return nullptr;
-        
-        string password = getHiddenInput("Password (or '0' to cancel): ");
-        if (password == "0") return nullptr;
-        
+        // Check credentials against user database
         for (const auto& user : users) {
-            if (user->getRole() == selectedRole &&
-                user->authenticate(username, password)) {
+            if (user->getRole() == role && user->authenticate(username, password)) {
                 cout << "\nLogin successful!\n";
                 return user.get();
             }
         }
         
-        throw AuthenticationException("Invalid credentials or role mismatch");
+        throw AuthenticationException("Invalid credentials");
     } catch (const AuthenticationException& e) {
         cout << "Login failed: " << e.what() << "\n";
         cout << "1. Try again\n0. Back to menu\n";
         int retry = getNumericInput("Enter choice: ", 0, 1);
-        return (retry == 1) ? login() : nullptr;
+        return (retry == 1) ? login(role) : nullptr;
     } catch (const exception& e) {
         cout << "An error occurred during login: " << e.what() << "\n";
         return nullptr;
