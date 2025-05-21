@@ -257,8 +257,12 @@ private:
     vector<Application> applications;
     int nextAppID = 1;
     
-    bool validateYesNo(const string& input) {
-    return input == "Y" || input == "y";
+bool validateYesNo(const string& input) {
+    if (input != "Y" && input != "y") {
+        cout << "Invalid input. Please input only Y or y.\n";
+        return false;
+    }
+    return true;
 }
     
     
@@ -581,7 +585,11 @@ bool isValidBreed(const string& breed) {
 }
 
 bool validateYesNo(const string& input) {
-    return input == "Y" || input == "y";
+    if (input != "Y" && input != "y") {
+        cout << "Invalid input. Please input only Y or y.\n";
+        return false;
+    }
+    return true;
 }
 
 // SearchStrategy implementations
@@ -1040,13 +1048,13 @@ void Admin::performAction(PetAdoptionSystem& system) {
             cout << "An error occurred: " << e.what() << "\n";
         }
         
-       if (choice != 6) {
+if (choice != 6) {
     string input;
     do {
         cout << "\nInput Y to continue: ";
         getline(cin, input);
     } while (!validateYesNo(input));
-} 
+}
     } while (choice != 6);
 }
 
@@ -1139,7 +1147,7 @@ void RegularUser::performAction(PetAdoptionSystem& system) {
             cout << "An error occurred: " << e.what() << "\n";
         }
         
-       if (choice != 4) {
+      if (choice != 4) {
     string input;
     do {
         cout << "\nInput Y to continue: ";
@@ -1206,7 +1214,7 @@ void PetAdoptionSystem::run() {
             cout << "An error occurred: " << e.what() << "\n";
         }
         
-       if (choice != 3) {
+      if (choice != 6) {
     string input;
     do {
         cout << "\nInput Y to continue: ";
