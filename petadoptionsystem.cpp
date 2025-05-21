@@ -257,6 +257,12 @@ private:
     vector<Application> applications;
     int nextAppID = 1;
     
+    bool validateYesNo(const string& input) {
+    return input == "Y" || input == "y";
+}
+    
+    
+    
     // Private constructor for singleton
     PetAdoptionSystem() {
         loadUsersFromFile();
@@ -572,6 +578,10 @@ bool isValidName(const string& name) {
 
 bool isValidBreed(const string& breed) {
     return isValidName(breed);
+}
+
+bool validateYesNo(const string& input) {
+    return input == "Y" || input == "y";
 }
 
 // SearchStrategy implementations
@@ -1030,11 +1040,13 @@ void Admin::performAction(PetAdoptionSystem& system) {
             cout << "An error occurred: " << e.what() << "\n";
         }
         
-        if (choice != 6) { 
-            cout << "\nPress Enter to continue..."; 
-            cin.ignore(); 
-            cin.get(); 
-        }
+       if (choice != 6) {
+    string input;
+    do {
+        cout << "\nInput Y to continue: ";
+        getline(cin, input);
+    } while (!validateYesNo(input));
+} 
     } while (choice != 6);
 }
 
@@ -1127,11 +1139,13 @@ void RegularUser::performAction(PetAdoptionSystem& system) {
             cout << "An error occurred: " << e.what() << "\n";
         }
         
-        if (choice != 4) { 
-            cout << "\nPress Enter to continue..."; 
-            cin.ignore(); 
-            cin.get(); 
-        }
+       if (choice != 4) {
+    string input;
+    do {
+        cout << "\nInput Y to continue: ";
+        getline(cin, input);
+    } while (!validateYesNo(input));
+}
     } while (choice != 4);
 }
 
@@ -1192,11 +1206,13 @@ void PetAdoptionSystem::run() {
             cout << "An error occurred: " << e.what() << "\n";
         }
         
-        if (choice != 3) { 
-            cout << "\nPress Enter to continue..."; 
-            cin.ignore(); 
-            cin.get(); 
-        }
+       if (choice != 3) {
+    string input;
+    do {
+        cout << "\nInput Y to continue: ";
+        getline(cin, input);
+    } while (!validateYesNo(input));
+}
     } while (choice != 3);
 }
 
